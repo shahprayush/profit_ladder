@@ -6,6 +6,8 @@ from sklearn.preprocessing import StandardScaler
 import requests
 import time
 import schedule
+from flask import Flask
+from threading import Thread
 from datetime import datetime
 import warnings
 warnings.filterwarnings('ignore')
@@ -151,6 +153,27 @@ def calculate_atr(df, window=14):
         np.abs(df['Low'] - df['Close'].shift())
     ], axis=1)
     return np.max(ranges, axis=1).ewm(alpha=1/window, adjust=False).mean()
+
+
+# ==========================================
+# RENDER.COM KEEP-ALIVE HACK
+# ==========================================
+app = Flask(__name__)
+
+@app.route('/')
+def heartbeat():
+    return "Apex Engine is ALIVE."
+
+def run_server():
+    # Render automatically provides a PORT environment variable
+    import os
+    port = int(os.environ.get('PORT', 8080))
+    app.run(host='0.0.0.0', port=port)
+
+def keep_alive():
+    t = Thread(target=run_server)
+    t.daemon = True
+    t.start()
 
 # ==========================================
 # 4. STARTUP: TRAIN THE AI BRAIN FOR TODAY
