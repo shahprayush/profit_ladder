@@ -6,10 +6,12 @@ from sklearn.preprocessing import StandardScaler
 import requests
 import time
 import schedule
-from flask import Flask
-from threading import Thread
 from datetime import datetime
 import warnings
+from flask import Flask
+from threading import Thread
+import os
+
 warnings.filterwarnings('ignore')
 
 print("🟢 INITIATING SHADOW BROKER: Live Paper-Trading Engine [TELEGRAM EDITION]")
@@ -17,11 +19,12 @@ print("🟢 INITIATING SHADOW BROKER: Live Paper-Trading Engine [TELEGRAM EDITIO
 # ==========================================
 # 1. LIVE CONFIGURATION & CREDENTIALS
 # ==========================================
-TELEGRAM_TOKEN = "8926726527:AAF8-xAb7zRwSCwWim3bypMP2xRfWmbxrW0"  # Paste your BotFather token here
-CHAT_ID = "2056261877" # Leave blank; the script will auto-detect this
+TELEGRAM_TOKEN = "8926726527:AAF8-xAb7zRwSCwWim3bypMP2xRfWmbxrW0"  # <-- Paste your BotFather token here
+CHAT_ID = "2056261877"                # <-- Paste your numeric Chat ID here (from @userinfobot)
 
 TICKERS = [
-"RELIANCE.NS","TCS.NS","HDFCBANK.NS","INFY.NS","ICICIBANK.NS",
+    # Large Cap (Nifty 50)
+    "RELIANCE.NS","TCS.NS","HDFCBANK.NS","INFY.NS","ICICIBANK.NS",
     "HINDUNILVR.NS","ITC.NS","SBIN.NS","BHARTIARTL.NS","KOTAKBANK.NS",
     "LT.NS","AXISBANK.NS","BAJFINANCE.NS","MARUTI.NS","ASIANPAINT.NS",
     "WIPRO.NS","HCLTECH.NS","TITAN.NS","ULTRACEMCO.NS","SUNPHARMA.NS",
@@ -111,34 +114,41 @@ rf_model = None
 scaler = None
 
 # ==========================================
-# 2. TELEGRAM SECURE BRIDGE
+# 2. RENDER.COM KEEP-ALIVE WEB SERVER HACK
 # ==========================================
-def get_chat_id():
-    global CHAT_ID
-    if CHAT_ID != "": return CHAT_ID
-    try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
-        response = requests.get(url).json()
-        if response.get("result"):
-            CHAT_ID = str(response["result"][0]["message"]["chat"]["id"])
-            send_telegram_msg("🟢 *Apex Engine Online*\nAI Brain successfully trained. Monitoring live markets.")
-            return CHAT_ID
-        else:
-            print("[!] Cannot find Chat ID. Did you send a message to your bot on Telegram?")
-            return None
-    except Exception as e:
-        print(f"[!] Telegram Connection Error: {e}")
-        return None
+web_app = Flask(__name__)
 
+@web_app.route('/')
+def heartbeat():
+    return "Shadow Broker Apex Engine is ALIVE and running."
+
+def run_server():
+    port = int(os.environ.get('PORT', 8080))
+    web_app.run(host='0.0.0.0', port=port)
+
+def keep_alive():
+    t = Thread(target=run_server)
+    t.daemon = True
+    t.start()
+    print("🚀 Flask Web Server opened successfully. Render port scan satisfied.")
+
+# ==========================================
+# 3. TELEGRAM BRIDGE
+# ==========================================
 def send_telegram_msg(msg):
-    if not get_chat_id(): return
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"}
-    requests.post(url, data=payload)
-    print(f"[TELEGRAM SENT]")
+    if not CHAT_ID or "YOUR_" in CHAT_ID:
+        print("[!] Chat ID not hardcoded properly. Skipping alert.")
+        return
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+        payload = {"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"}
+        requests.post(url, data=payload)
+        print("[TELEGRAM SENT]")
+    except Exception as e:
+        print(f"[!] Error sending Telegram message: {e}")
 
 # ==========================================
-# 3. CORE INDICATORS 
+# 4. CORE INDICATORS 
 # ==========================================
 def calculate_rsi(data, window=14):
     delta = data.diff()
@@ -154,71 +164,59 @@ def calculate_atr(df, window=14):
     ], axis=1)
     return np.max(ranges, axis=1).ewm(alpha=1/window, adjust=False).mean()
 
-
 # ==========================================
-# RENDER.COM KEEP-ALIVE HACK
-# ==========================================
-app = Flask(__name__)
-
-@app.route('/')
-def heartbeat():
-    return "Apex Engine is ALIVE."
-
-def run_server():
-    # Render automatically provides a PORT environment variable
-    import os
-    port = int(os.environ.get('PORT', 8080))
-    app.run(host='0.0.0.0', port=port)
-
-def keep_alive():
-    t = Thread(target=run_server)
-    t.daemon = True
-    t.start()
-
-# ==========================================
-# 4. STARTUP: TRAIN THE AI BRAIN FOR TODAY
+# 5. STARTUP: TRAIN THE AI BRAIN
 # ==========================================
 def train_current_brain():
     global rf_model, scaler
     print("[*] Downloading historical data to train the AI for today's market...")
     
     nifty = yf.download(MACRO_TICKER, start="2019-01-01", end="2024-01-01", progress=False)
+    if isinstance(nifty.columns, pd.MultiIndex):
+        nifty.columns = nifty.columns.get_level_values(0)
+    
     nifty.index = pd.to_datetime(nifty.index).tz_localize(None)
     nifty['Macro_Bull'] = nifty['Close'] > nifty['Close'].ewm(span=200, adjust=False).mean()
     macro_dict = nifty['Macro_Bull'].to_dict()
 
     master_df = []
-for ticker in TICKERS:
-        df = yf.download(ticker, start="2019-01-01", end="2024-01-01", progress=False)
-        if df.empty: continue
-        
-        # --- ADD THESE TWO LINES ---
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
-        # ---------------------------
-        
-        df.index = pd.to_datetime(df.index).tz_localize(None)
-        
-        df['EMA_Fast'] = df['Close'].ewm(span=FAST_LEN, adjust=False).mean()
-        df['EMA_Slow'] = df['Close'].ewm(span=SLOW_LEN, adjust=False).mean()
-        df['EMA_Trend'] = df['Close'].ewm(span=TREND_LEN, adjust=False).mean()
-        df['ATR'] = calculate_atr(df, ATR_LEN)
-        df['Vol_SMA'] = df['Volume'].rolling(window=20).mean()
-        df['F_RSI'] = calculate_rsi(df['Close'], 14)
-        df['F_Vol_Ratio'] = df['Volume'] / df['Vol_SMA']
-        df['F_Distance_EMA'] = (df['Close'] - df['EMA_Fast']) / df['Close']
-        df['F_ATR_Pct'] = df['ATR'] / df['Close']
-        
-        df['Trend_Ok'] = (df['Close'] > df['EMA_Trend']) & (df['EMA_Slow'] > df['EMA_Trend'])
-        df['Pullback_Ok'] = (df['Close'].shift(1) < df['EMA_Fast'].shift(1)) | (df['Close'].shift(2) < df['EMA_Fast'].shift(2))
-        df['Cross_Ok'] = (df['Close'].shift(1) < df['EMA_Fast'].shift(1)) & (df['Close'] >= df['EMA_Fast'])
-        
-        df['Future_High'] = df['High'].rolling(window=15).max().shift(-15)
-        df['Target_Hit'] = (df['Future_High'] >= df['Close'] * (1 + T1_PCT)).astype(int)
-        df['Macro_Bull'] = df.index.map(macro_dict).fillna(False)
-        
-        valid = df[df['Trend_Ok'] & df['Pullback_Ok'] & df['Cross_Ok'] & df['Macro_Bull']].copy()
-        if not valid.empty: master_df.append(valid)
+    for ticker in TICKERS:
+        try:
+            df = yf.download(ticker, start="2019-01-01", end="2024-01-01", progress=False)
+            if df.empty or len(df) < 100: continue
+            
+            # [CRITICAL MULTIINDEX FLATTENER]
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.get_level_values(0)
+                
+            df.index = pd.to_datetime(df.index).tz_localize(None)
+            
+            df['EMA_Fast'] = df['Close'].ewm(span=FAST_LEN, adjust=False).mean()
+            df['EMA_Slow'] = df['Close'].ewm(span=SLOW_LEN, adjust=False).mean()
+            df['EMA_Trend'] = df['Close'].ewm(span=TREND_LEN, adjust=False).mean()
+            df['ATR'] = calculate_atr(df, ATR_LEN)
+            df['Vol_SMA'] = df['Volume'].rolling(window=20).mean()
+            df['F_RSI'] = calculate_rsi(df['Close'], 14)
+            df['F_Vol_Ratio'] = df['Volume'] / df['Vol_SMA']
+            df['F_Distance_EMA'] = (df['Close'] - df['EMA_Fast']) / df['Close']
+            df['F_ATR_Pct'] = df['ATR'] / df['Close']
+            
+            df['Trend_Ok'] = (df['Close'] > df['EMA_Trend']) & (df['EMA_Slow'] > df['EMA_Trend'])
+            df['Pullback_Ok'] = (df['Close'].shift(1) < df['EMA_Fast'].shift(1)) | (df['Close'].shift(2) < df['EMA_Fast'].shift(2))
+            df['Cross_Ok'] = (df['Close'].shift(1) < df['EMA_Fast'].shift(1)) & (df['Close'] >= df['EMA_Fast'])
+            
+            df['Future_High'] = df['High'].rolling(window=15).max().shift(-15)
+            df['Target_Hit'] = (df['Future_High'] >= df['Close'] * (1 + T1_PCT)).astype(int)
+            df['Macro_Bull'] = df.index.map(macro_dict).fillna(False)
+            
+            valid = df[df['Trend_Ok'] & df['Pullback_Ok'] & df['Cross_Ok'] & df['Macro_Bull']].copy()
+            if not valid.empty: master_df.append(valid)
+        except Exception as e:
+            continue
+
+    if not master_df:
+        print("[!] No training setups found. Falling back to default random initialization.")
+        return
 
     combined = pd.concat(master_df).dropna().sort_index()
     X = combined[['F_RSI', 'F_Vol_Ratio', 'F_Distance_EMA', 'F_ATR_Pct']]
@@ -229,95 +227,102 @@ for ticker in TICKERS:
     
     rf_model = RandomForestClassifier(n_estimators=100, max_depth=5, random_state=42, class_weight='balanced')
     rf_model.fit(X_scaled, y)
-    print(f"✅ AI Brain trained on {len(combined)} historical setups.")
+    print(f"✅ AI Brain successfully trained on {len(combined)} historical setups.")
+    send_telegram_msg("🟢 *Apex Engine Online*\nAI Engine deployed on Render. Actively monitoring Nifty 500.")
 
 # ==========================================
-# 5. LIVE MARKET SCANNER
+# 6. LIVE MARKET SCANNER
 # ==========================================
 def scan_markets():
     now = datetime.now().strftime("%H:%M:%S")
     print(f"\n[{now}] 📡 Scanning NSE for institutional setups...")
-    
+    if rf_model is None or scaler is None:
+        print("[!] AI Model not loaded yet. Skipping scan.")
+        return
+        
     try:
         nifty = yf.download(MACRO_TICKER, period="200d", progress=False)
+        if isinstance(nifty.columns, pd.MultiIndex):
+            nifty.columns = nifty.columns.get_level_values(0)
+            
         nifty_close = float(nifty['Close'].iloc[-1])
         nifty_200 = float(nifty['Close'].ewm(span=200, adjust=False).mean().iloc[-1])
         
         if nifty_close < nifty_200:
-            print("[!] Macro Regime is BEARISH. AI is physically locked down.")
+            print("[!] Macro Regime is BEARISH. AI scanner is safety-locked.")
             return
 
-            for ticker in TICKERS:
-            df = yf.download(ticker, period="150d", progress=False)
-            if df.empty or len(df) < 100: continue
-            
-            # --- ADD THESE TWO LINES ---
-            if isinstance(df.columns, pd.MultiIndex):
-                df.columns = df.columns.get_level_values(0)
-            
-            close = float(df['Close'].iloc[-1])
-            low = float(df['Low'].iloc[-1])
-            volume = float(df['Volume'].iloc[-1])
-            
-            ema_fast = df['Close'].ewm(span=FAST_LEN, adjust=False).mean()
-            ema_slow = df['Close'].ewm(span=SLOW_LEN, adjust=False).mean()
-            ema_trend = df['Close'].ewm(span=TREND_LEN, adjust=False).mean()
-            atr = calculate_atr(df, ATR_LEN)
-            vol_sma = df['Volume'].rolling(window=20).mean()
-            rsi = calculate_rsi(df['Close'], 14)
-            
-            cur_ema_fast = float(ema_fast.iloc[-1])
-            cur_ema_slow = float(ema_slow.iloc[-1])
-            cur_ema_trend = float(ema_trend.iloc[-1])
-            cur_atr = float(atr.iloc[-1])
-            cur_rsi = float(rsi.iloc[-1])
-            cur_vol_ratio = volume / float(vol_sma.iloc[-1])
-            
-            trend_ok = (close > cur_ema_trend) and (cur_ema_slow > cur_ema_trend)
-            pullback_ok = (float(df['Close'].iloc[-2]) < float(ema_fast.iloc[-2])) or (float(df['Close'].iloc[-3]) < float(ema_fast.iloc[-3]))
-            cross_ok = (float(df['Close'].iloc[-2]) < float(ema_fast.iloc[-2])) and (close >= cur_ema_fast)
-            
-            if trend_ok and pullback_ok and cross_ok:
+        for ticker in TICKERS:
+            try:
+                df = yf.download(ticker, period="150d", progress=False)
+                if df.empty or len(df) < 100: continue
                 
-                dist_ema = (close - cur_ema_fast) / close
-                atr_pct = cur_atr / close
-                features = scaler.transform([[cur_rsi, cur_vol_ratio, dist_ema, atr_pct]])
-                ai_prob = rf_model.predict_proba(features)[0][1]
+                # [CRITICAL MULTIINDEX FLATTENER]
+                if isinstance(df.columns, pd.MultiIndex):
+                    df.columns = df.columns.get_level_values(0)
                 
-                if ai_prob >= AI_CONFIDENCE_THRESHOLD:
+                close = float(df['Close'].iloc[-1])
+                low = float(df['Low'].iloc[-1])
+                volume = float(df['Volume'].iloc[-1])
+                
+                ema_fast = df['Close'].ewm(span=FAST_LEN, adjust=False).mean()
+                ema_slow = df['Close'].ewm(span=SLOW_LEN, adjust=False).mean()
+                ema_trend = df['Close'].ewm(span=TREND_LEN, adjust=False).mean()
+                atr = calculate_atr(df, ATR_LEN)
+                vol_sma = df['Volume'].rolling(window=20).mean()
+                rsi = calculate_rsi(df['Close'], 14)
+                
+                cur_ema_fast = float(ema_fast.iloc[-1])
+                cur_ema_slow = float(ema_slow.iloc[-1])
+                cur_ema_trend = float(ema_trend.iloc[-1])
+                cur_atr = float(atr.iloc[-1])
+                cur_rsi = float(rsi.iloc[-1])
+                cur_vol_ratio = volume / float(vol_sma.iloc[-1])
+                
+                trend_ok = (close > cur_ema_trend) and (cur_ema_slow > cur_ema_trend)
+                pullback_ok = (float(df['Close'].iloc[-2]) < float(ema_fast.iloc[-2])) or (float(df['Close'].iloc[-3]) < float(ema_fast.iloc[-3]))
+                cross_ok = (float(df['Close'].iloc[-2]) < float(ema_fast.iloc[-2])) and (close >= cur_ema_fast)
+                
+                if trend_ok and pullback_ok and cross_ok:
+                    dist_ema = (close - cur_ema_fast) / close
+                    atr_pct = cur_atr / close
+                    features = scaler.transform([[cur_rsi, cur_vol_ratio, dist_ema, atr_pct]])
+                    ai_prob = rf_model.predict_proba(features)[0][1]
                     
-                    risk_per_share = max(close - (low - ATR_SL_MULT * cur_atr), close * 0.005)
-                    total_risk = INITIAL_CAPITAL * RISK_PER_TRADE
-                    qty = int(min(total_risk / risk_per_share, (INITIAL_CAPITAL * 0.50) / close))
-                    
-                    t1 = round(close * (1 + T1_PCT), 2)
-                    sl = round(close - risk_per_share, 2)
-                    
-                    msg = f"🔥 *PAPER ENTRY SIGNAL*\n" \
-                          f"Ticker: {ticker}\n" \
-                          f"Price: ₹{close:.2f}\n" \
-                          f"AI Confidence: {ai_prob*100:.1f}%\n" \
-                          f"Qty: {qty} shares\n" \
-                          f"Target 1: ₹{t1} | SL: ₹{sl}"
-                    
-                    send_telegram_msg(msg)
-                    
-                    with open("paper_ledger.csv", "a") as f:
-                        f.write(f"{datetime.now().strftime('%Y-%m-%d %H:%M')},{ticker},{close},{qty},{sl},{t1},{ai_prob}\n")
+                    if ai_prob >= AI_CONFIDENCE_THRESHOLD:
+                        risk_per_share = max(close - (low - ATR_SL_MULT * cur_atr), close * 0.005)
+                        total_risk = INITIAL_CAPITAL * RISK_PER_TRADE
+                        qty = int(min(total_risk / risk_per_share, (INITIAL_CAPITAL * 0.50) / close))
+                        
+                        t1 = round(close * (1 + T1_PCT), 2)
+                        sl = round(close - risk_per_share, 2)
+                        
+                        msg = f"🔥 *PAPER ENTRY SIGNAL*\n" \
+                              f"Ticker: {ticker}\n" \
+                              f"Price: ₹{close:.2f}\n" \
+                              f"AI Confidence: {ai_prob*100:.1f}%\n" \
+                              f"Qty: {qty} shares\n" \
+                              f"Target 1: ₹{t1} | SL: ₹{sl}"
+                        
+                        send_telegram_msg(msg)
+            except Exception as ticker_err:
+                continue
                         
     except Exception as e:
         print(f"[!] Error in scan loop: {e}")
 
 # ==========================================
-# 6. EXECUTION ENGINE
+# 7. EXECUTION ENGINE
 # ==========================================
 if __name__ == "__main__":
-    keep_alive()           # <-- THIS MUST BE FIRST!
-    get_chat_id()
+    # 1. Open web server instantly so Render port scanner passes
+    keep_alive()
+    
+    # 2. Train the internal brain matrix
     train_current_brain()
     
+    # 3. Schedule operational scan loops every 30 minutes
     schedule.every(30).minutes.do(scan_markets)
-    print("\n✅ System armed. Monitoring live markets in the background...")
     scan_markets() 
     
     while True:
