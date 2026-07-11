@@ -18,7 +18,7 @@ print("🟢 INITIATING SHADOW BROKER: Live Paper-Trading Engine [TELEGRAM EDITIO
 # 1. LIVE CONFIGURATION & CREDENTIALS
 # ==========================================
 TELEGRAM_TOKEN = "8926726527:AAF8-xAb7zRwSCwWim3bypMP2xRfWmbxrW0"  # Paste your BotFather token here
-CHAT_ID = "" # Leave blank; the script will auto-detect this
+CHAT_ID = "2056261877" # Leave blank; the script will auto-detect this
 
 TICKERS = [
 "RELIANCE.NS","TCS.NS","HDFCBANK.NS","INFY.NS","ICICIBANK.NS",
@@ -188,9 +188,15 @@ def train_current_brain():
     macro_dict = nifty['Macro_Bull'].to_dict()
 
     master_df = []
-    for ticker in TICKERS:
+for ticker in TICKERS:
         df = yf.download(ticker, start="2019-01-01", end="2024-01-01", progress=False)
         if df.empty: continue
+        
+        # --- ADD THESE TWO LINES ---
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+        # ---------------------------
+        
         df.index = pd.to_datetime(df.index).tz_localize(None)
         
         df['EMA_Fast'] = df['Close'].ewm(span=FAST_LEN, adjust=False).mean()
@@ -241,9 +247,13 @@ def scan_markets():
             print("[!] Macro Regime is BEARISH. AI is physically locked down.")
             return
 
-        for ticker in TICKERS:
+            for ticker in TICKERS:
             df = yf.download(ticker, period="150d", progress=False)
             if df.empty or len(df) < 100: continue
+            
+            # --- ADD THESE TWO LINES ---
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.get_level_values(0)
             
             close = float(df['Close'].iloc[-1])
             low = float(df['Low'].iloc[-1])
