@@ -302,11 +302,11 @@ def scan_markets():
 # 6. EXECUTION ENGINE
 # ==========================================
 if __name__ == "__main__":
+    keep_alive()           # <-- THIS MUST BE FIRST!
     get_chat_id()
     train_current_brain()
     
     schedule.every(30).minutes.do(scan_markets)
-    
     print("\n✅ System armed. Monitoring live markets in the background...")
     scan_markets() 
     
