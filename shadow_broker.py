@@ -15,7 +15,7 @@ print("🟢 INITIATING SHADOW BROKER: Live Paper-Trading Engine [TELEGRAM EDITIO
 # ==========================================
 # 1. LIVE CONFIGURATION & CREDENTIALS
 # ==========================================
-TELEGRAM_TOKEN = "YOUR_TELEGRAM_TOKEN_HERE"  # Paste your BotFather token here
+TELEGRAM_TOKEN = "8926726527:AAF8-xAb7zRwSCwWim3bypMP2xRfWmbxrW0"  # Paste your BotFather token here
 CHAT_ID = "" # Leave blank; the script will auto-detect this
 
 TICKERS = [
